@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { OpenGinMetadata } from '../utils/openGinProcessor';
+import CategoryManager from './CategoryManager';
 
 interface MetadataFormProps {
   onSubmit: (metadata: OpenGinMetadata) => void;
@@ -15,10 +16,26 @@ export default function MetadataForm({ onSubmit, onCancel, isVisible }: Metadata
     dateOfCreation: new Date().toISOString().split('T')[0], // Today's date
     dataEntryPerson: '',
     importantUrls: [''],
-    description: ''
+    description: '',
+    categories: []
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Reset form state when modal becomes visible (for new dataset)
+  useEffect(() => {
+    if (isVisible) {
+      setFormData({
+        dataSource: '',
+        dateOfCreation: new Date().toISOString().split('T')[0], // Today's date
+        dataEntryPerson: '',
+        importantUrls: [''],
+        description: '',
+        categories: []
+      });
+      setErrors({});
+    }
+  }, [isVisible]);
 
   const handleInputChange = (field: keyof OpenGinMetadata, value: string) => {
     setFormData(prev => ({
@@ -233,6 +250,13 @@ export default function MetadataForm({ onSubmit, onCancel, isVisible }: Metadata
               )}
             </div>
 
+            <div>
+              <CategoryManager
+                categories={formData.categories || []}
+                onChange={(categories) => setFormData(prev => ({ ...prev, categories }))}
+              />
+            </div>
+
             <div className="flex justify-end space-x-3 pt-4">
               <button
                 type="button"
@@ -245,7 +269,7 @@ export default function MetadataForm({ onSubmit, onCancel, isVisible }: Metadata
                 type="submit"
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                Continue to Conversion
+                Add to Batch
               </button>
             </div>
           </form>

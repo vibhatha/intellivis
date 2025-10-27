@@ -80,7 +80,7 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
           name: fileName,
           type: 'file',
           path: path,
-          size: file._data?.uncompressedSize,
+          size: (file as any)._data?.uncompressedSize,
           lastModified: file.date
         };
         currentParent.children!.push(fileNode);

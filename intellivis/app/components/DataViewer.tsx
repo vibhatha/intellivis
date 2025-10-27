@@ -46,7 +46,7 @@ export default function DataViewer({ zipFile, datasetPath, onBack }: DataViewerP
               name: fileName,
               content: '', // Will be loaded on demand
               type: extension as 'json' | 'csv' | 'xlsx',
-              size: file._data?.uncompressedSize || 0
+              size: (file as any)._data?.uncompressedSize || 0
             });
           }
         }
