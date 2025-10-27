@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import ZipFileUpload from './ZipFileUpload';
 import DataViewer from './DataViewer';
+import DirectoryTree from './DirectoryTree';
 
 export interface ZipFileStructure {
   name: string;
@@ -14,16 +15,6 @@ export interface ZipFileStructure {
   lastModified?: Date;
 }
 
-export interface CategoryTile {
-  id: string;
-  name: string;
-  type: 'category' | 'subcategory' | 'dataset';
-  path: string;
-  description?: string;
-  fileCount?: number;
-  children?: CategoryTile[];
-  dataFiles?: string[];
-}
 
 interface ZipExplorerProps {
   className?: string;
@@ -32,9 +23,8 @@ interface ZipExplorerProps {
 export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [zipStructure, setZipStructure] = useState<ZipFileStructure | null>(null);
-  const [categoryTiles, setCategoryTiles] = useState<CategoryTile[]>([]);
-  const [currentPath, setCurrentPath] = useState<string[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
+  const [selectedTreePath, setSelectedTreePath] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +36,9 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
       path: '',
       children: []
     };
+
+    // Debug: Log all files in the ZIP
+    console.log('ZIP Files:', Object.keys(zip.files));
 
     const buildTree = (files: { [key: string]: JSZip.JSZipObject }, parent: ZipFileStructure) => {
       const folders = new Map<string, ZipFileStructure>();
@@ -88,46 +81,11 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
     };
 
     buildTree(zip.files, root);
+    
+    // Debug: Log the parsed structure
+    console.log('Parsed Structure:', root);
+    
     return root;
-  };
-
-  const generateCategoryTiles = (structure: ZipFileStructure): CategoryTile[] => {
-    if (!structure.children) return [];
-
-    return structure.children
-      .filter(child => child.type === 'folder')
-      .map(folder => {
-        const dataFiles = folder.children
-          ?.filter(child => child.type === 'file' && 
-            (child.name.endsWith('.json') || child.name.endsWith('.csv') || child.name.endsWith('.xlsx')))
-          .map(file => file.name) || [];
-
-        const subcategories = folder.children
-          ?.filter(child => child.type === 'folder')
-          .map(subfolder => ({
-            id: `${folder.name}-${subfolder.name}`,
-            name: subfolder.name,
-            type: 'subcategory' as const,
-            path: subfolder.path,
-            description: `Contains ${subfolder.children?.length || 0} items`,
-            fileCount: subfolder.children?.filter(c => c.type === 'file').length || 0,
-            dataFiles: subfolder.children
-              ?.filter(child => child.type === 'file' && 
-                (child.name.endsWith('.json') || child.name.endsWith('.csv') || child.name.endsWith('.xlsx')))
-              .map(file => file.name) || []
-          })) || [];
-
-        return {
-          id: folder.name,
-          name: folder.name,
-          type: 'category',
-          path: folder.path,
-          description: `Contains ${folder.children?.length || 0} items`,
-          fileCount: folder.children?.filter(c => c.type === 'file').length || 0,
-          children: subcategories,
-          dataFiles: dataFiles
-        };
-      });
   };
 
   const handleFileSelect = async (file: File) => {
@@ -138,10 +96,7 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
       setZipFile(file);
       const structure = await parseZipStructure(file);
       setZipStructure(structure);
-      
-      const tiles = generateCategoryTiles(structure);
-      setCategoryTiles(tiles);
-      setCurrentPath([]);
+      setSelectedTreePath('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse ZIP file');
     } finally {
@@ -149,47 +104,52 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
     }
   };
 
-  const navigateToPath = (path: string[], tiles: CategoryTile[]) => {
-    setCurrentPath(path);
-    
-    if (path.length === 0) {
-      setCategoryTiles(generateCategoryTiles(zipStructure!));
-    } else {
-      // Navigate to subcategory
-      const currentTiles = path.reduce((current, pathSegment) => {
-        const tile = current.find(t => t.name === pathSegment);
-        return tile?.children || [];
-      }, tiles);
-      
-      setCategoryTiles(currentTiles);
-    }
-  };
-
-  const handleTileClick = (tile: CategoryTile) => {
-    if (tile.type === 'dataset' || tile.dataFiles?.length) {
-      // This is a dataset with data files
-      setSelectedDataset(tile.path);
-    } else if (tile.children && tile.children.length > 0) {
-      // Navigate to subcategory
-      const newPath = [...currentPath, tile.name];
-      navigateToPath(newPath, generateCategoryTiles(zipStructure!));
-    }
-  };
-
-  const goBack = () => {
-    if (currentPath.length > 0) {
-      const newPath = currentPath.slice(0, -1);
-      navigateToPath(newPath, generateCategoryTiles(zipStructure!));
-    }
-  };
-
   const resetExplorer = () => {
     setZipFile(null);
     setZipStructure(null);
-    setCategoryTiles([]);
-    setCurrentPath([]);
     setSelectedDataset(null);
+    setSelectedTreePath('');
     setError(null);
+  };
+
+  const handleTreeNodeClick = (path: string) => {
+    setSelectedTreePath(path);
+    
+    // Find the node in the structure
+    const findNode = (node: ZipFileStructure, targetPath: string): ZipFileStructure | null => {
+      if (node.path === targetPath) return node;
+      if (node.children) {
+        for (const child of node.children) {
+          const found = findNode(child, targetPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    if (zipStructure) {
+      const node = findNode(zipStructure, path);
+      if (node) {
+        // Check if this is an OpenGIN dataset
+        const hasOpenGinData = node.children?.some(child => 
+          child.type === 'file' && child.name === 'data.json'
+        ) && node.children?.some(child => 
+          child.type === 'file' && child.name === 'metadata.json'
+        );
+
+        console.log(`Clicked node: ${node.name}`, {
+          path,
+          hasOpenGinData,
+          children: node.children?.map(c => ({ name: c.name, type: c.type })),
+          willOpenDataset: hasOpenGinData
+        });
+
+        if (hasOpenGinData) {
+          setSelectedDataset(path);
+        }
+        // For folders without OpenGIN data, we just highlight them in the tree
+      }
+    }
   };
 
   if (selectedDataset) {
@@ -222,7 +182,7 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
           <div className="text-center">
             <h2 className="text-3xl font-bold text-white mb-4">XploreData</h2>
             <p className="text-gray-300 text-lg mb-8">
-              Upload a ZIP file to explore hierarchical data categories and datasets
+              Upload a ZIP file generated by the batch system to explore hierarchical data categories and OpenGIN datasets
             </p>
           </div>
           <ZipFileUpload 
@@ -250,156 +210,53 @@ export default function ZipExplorer({ className = '' }: ZipExplorerProps) {
                 </svg>
                 Reset
               </button>
-              
-              {currentPath.length > 0 && (
-                <button
-                  onClick={goBack}
-                  className="flex items-center text-blue-500 hover:text-blue-600 transition-colors duration-200"
-                >
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  Back
-                </button>
-              )}
             </div>
             
             <div className="text-sm text-gray-400">
-              {zipFile.name} • {currentPath.length > 0 ? currentPath.join(' / ') : 'Root'}
+              {zipFile.name}
             </div>
           </div>
 
-          {/* Breadcrumb */}
-          {currentPath.length > 0 && (
-            <div className="flex items-center space-x-2 text-sm text-gray-400">
-              <span>Root</span>
-              {currentPath.map((segment, index) => (
-                <div key={index} className="flex items-center space-x-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                  <span>{segment}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Loading State */}
-          {isLoading && (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-              <span className="ml-3 text-gray-300">Processing ZIP file...</span>
-            </div>
-          )}
-
-          {/* Tiles Grid */}
-          {!isLoading && categoryTiles.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {categoryTiles.map((tile) => (
-                <CategoryTile
-                  key={tile.id}
-                  tile={tile}
-                  onClick={() => handleTileClick(tile)}
+          {/* Single-pane layout with directory tree */}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Left pane - Directory Tree */}
+            <div className="lg:col-span-1">
+              {zipStructure && (
+                <DirectoryTree
+                  structure={zipStructure}
+                  onNodeClick={handleTreeNodeClick}
+                  selectedPath={selectedTreePath}
+                  className="h-[calc(100vh-200px)]"
                 />
-              ))}
+              )}
             </div>
-          )}
 
-          {/* Empty State */}
-          {!isLoading && categoryTiles.length === 0 && (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 bg-gray-700 rounded-xl flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <h3 className="text-xl font-semibold text-white mb-2">No Categories Found</h3>
-              <p className="text-gray-400">This ZIP file doesn't contain any organized categories.</p>
+            {/* Right pane - Content area */}
+            <div className="lg:col-span-3 space-y-6">
+              {/* Loading State */}
+              {isLoading && (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                  <span className="ml-3 text-gray-300">Processing ZIP file...</span>
+                </div>
+              )}
+
+              {/* Content will be shown when a dataset is selected */}
+              {!isLoading && !selectedDataset && (
+                <div className="text-center py-12">
+                  <div className="w-16 h-16 bg-gray-700 rounded-xl flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-xl font-semibold text-white mb-2">Select a Dataset</h3>
+                  <p className="text-gray-400">Click on a dataset in the directory tree to view its contents.</p>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
-    </div>
-  );
-}
-
-interface CategoryTileProps {
-  tile: CategoryTile;
-  onClick: () => void;
-}
-
-function CategoryTile({ tile, onClick }: CategoryTileProps) {
-  const getTileIcon = () => {
-    if (tile.type === 'dataset' || tile.dataFiles?.length) {
-      return (
-        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      );
-    }
-    
-    return (
-      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v2H8V5z" />
-      </svg>
-    );
-  };
-
-  const getTileColor = () => {
-    if (tile.type === 'dataset' || tile.dataFiles?.length) {
-      return 'from-green-500 to-emerald-500';
-    }
-    return 'from-blue-500 to-cyan-500';
-  };
-
-  return (
-    <div
-      onClick={onClick}
-      className="group bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-2xl p-6 hover:bg-gray-800/70 hover:border-blue-500/50 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl hover:shadow-blue-500/10 cursor-pointer"
-    >
-      <div className={`w-16 h-16 bg-gradient-to-r ${getTileColor()} rounded-xl flex items-center justify-center mb-4 mx-auto group-hover:scale-110 transition-transform duration-300`}>
-        {getTileIcon()}
-      </div>
-      
-      <h3 className="text-xl font-semibold text-white mb-2 group-hover:text-blue-300 transition-colors duration-300 text-center">
-        {tile.name}
-      </h3>
-      
-      {tile.description && (
-        <p className="text-gray-400 text-sm text-center group-hover:text-gray-300 transition-colors duration-300 mb-3">
-          {tile.description}
-        </p>
-      )}
-      
-      <div className="flex items-center justify-center space-x-4 text-xs text-gray-500">
-        {tile.fileCount !== undefined && (
-          <div className="flex items-center space-x-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <span>{tile.fileCount} files</span>
-          </div>
-        )}
-        
-        {tile.children && tile.children.length > 0 && (
-          <div className="flex items-center space-x-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
-            </svg>
-            <span>{tile.children.length} subcategories</span>
-          </div>
-        )}
-      </div>
-      
-      <div className="mt-4 flex items-center justify-center text-blue-400 group-hover:text-blue-300 transition-colors duration-300">
-        <span className="text-sm font-medium">
-          {tile.type === 'dataset' || tile.dataFiles?.length ? 'View Data' : 'Explore'}
-        </span>
-        <svg className="w-4 h-4 ml-2 transform group-hover:translate-x-1 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-      </div>
     </div>
   );
 }
